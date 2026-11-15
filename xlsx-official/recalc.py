@@ -17,6 +17,9 @@ def setup_libreoffice_macro():
     """Setup LibreOffice macro for recalculation if not already configured"""
     if platform.system() == 'Darwin':
         macro_dir = os.path.expanduser('~/Library/Application Support/LibreOffice/4/user/basic/Standard')
+    elif platform.system() == 'Windows':
+        appdata = os.environ.get('APPDATA') or os.path.expanduser('~/AppData/Roaming')
+        macro_dir = os.path.join(appdata, 'LibreOffice', '4', 'user', 'basic', 'Standard')
     else:
         macro_dir = os.path.expanduser('~/.config/libreoffice/4/user/basic/Standard')
     
@@ -89,8 +92,19 @@ def recalc(filename, timeout=30):
         if timeout_cmd:
             cmd = [timeout_cmd, str(timeout)] + cmd
     
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    
+    if platform.system() == 'Windows':
+        # Windows has no `timeout` command: enforce the limit here and stop LibreOffice if it hangs
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            result = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], capture_output=True)
+            proc.communicate()
+            result = subprocess.CompletedProcess(cmd, 124, '', '')
+    else:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
     if result.returncode != 0 and result.returncode != 124:  # 124 is timeout exit code
         error_msg = result.stderr or 'Unknown error during recalculation'
         if 'Module1' in error_msg or 'RecalculateAndSave' not in error_msg:
